@@ -216,7 +216,13 @@ export default function App() {
       setDocuments((prev) => [newDoc, ...prev]);
       setActiveDocId(newDoc.id);
     } catch (err: any) {
-      alert('تعذر تحليل الملف: ' + (err.message || 'خطأ غير معروف'));
+      const errMsg = err.message || '';
+      if (errMsg.includes('GEMINI_API_KEY_MISSING') || errMsg.includes('GEMINI_API_KEY') || errMsg.includes('not configured')) {
+        setIsSettingsOpen(true);
+        alert('مفتاح Gemini API غير مهيأ: يرجى إدخال مفتاح الـ API المجاني الخاص بكِ في نافذة الإعدادات التي فُتحت الآن لتفعيل الخدمة على موقع Vercel!');
+      } else {
+        alert('تعذر تحليل الملف: ' + (err.message || 'خطأ غير معروف'));
+      }
     } finally {
       setIsLoading(false);
       setLoadingText('');

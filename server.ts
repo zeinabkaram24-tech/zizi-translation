@@ -21,7 +21,7 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 function getGenAI(customKey?: string) {
   const apiKey = customKey || process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error('GEMINI_API_KEY is not configured in environment variables.');
+    throw new Error('GEMINI_API_KEY_MISSING: يرجى إدخال مفتاح Gemini API الخاص بكِ في أيقونة الإعدادات ⚙️ بأعلى الشاشة لتفعيل الترجمة والتحليل.');
   }
   return new GoogleGenAI({
     apiKey,
@@ -43,8 +43,8 @@ async function generateWithRetry(params: {
 }) {
   const ai = getGenAI(params.customKey);
   const models = [
-    params.preferredModel || 'gemini-2.5-flash',
-    'gemini-1.5-flash',
+    params.preferredModel || 'gemini-3.8-flash',
+    'gemini-3.1-flash-lite',
   ];
 
   let lastError: any = null;
@@ -125,7 +125,7 @@ app.post('/api/analyze-document', async (req, res) => {
     }
 
     const response = await generateWithRetry({
-      preferredModel: 'gemini-2.5-flash',
+      preferredModel: 'gemini-3.8-flash',
       contents,
       customKey,
       config: {
@@ -253,7 +253,7 @@ app.post('/api/define-word', async (req, res) => {
     }
 
     const response = await generateWithRetry({
-      preferredModel: 'gemini-2.5-flash',
+      preferredModel: 'gemini-3.8-flash',
       contents: `ما معنى الكلمة الإنجليزية "${word}" في سياق هذه الجملة: "${sentence || ''}"؟`,
       customKey,
       config: {
@@ -303,7 +303,7 @@ app.post('/api/tts', async (req, res) => {
     const ai = getGenAI(customKey);
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-3.8-flash-lite-tts',
       contents: [
         {
           role: 'user',
