@@ -1,0 +1,6 @@
+{
+  "name": "LingoDoc - مترجم المستندات الذكي ومساعد المفردات",
+  "description": "تطبيق ذكي لتحميل المستندات والصور وملفات PDF، وترجمتها جملة بجملة مع النطق الصوتي وترجمة سياقية وحرفية وحفظ المفردات الجديدة بنقرة واحدة.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
