@@ -33,6 +33,22 @@ function getGenAI(customKey?: string) {
   });
 }
 
+// Robust helper to strip markdown wrappers and extract raw JSON
+function cleanJsonString(str: string): string {
+  let cleaned = str.trim();
+  if (cleaned.startsWith('```json')) {
+    cleaned = cleaned.replace(/^```json\s*/i, '').replace(/\s*```$/, '');
+  } else if (cleaned.startsWith('```')) {
+    cleaned = cleaned.replace(/^```\s*/i, '').replace(/\s*```$/, '');
+  }
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+  }
+  return cleaned;
+}
+
 // Resilient helper to call Gemini with retry and fallback model
 async function generateWithRetry(params: {
   contents: any;
@@ -61,8 +77,8 @@ async function generateWithRetry(params: {
       lastError = err;
       const status = err?.status || err?.code;
       console.warn(`Model ${model} failed (${status}):`, err?.message || err);
-      // Wait 800ms before attempting fallback
-      await new Promise((r) => setTimeout(r, 800));
+      // Wait 1200ms before attempting fallback model
+      await new Promise((r) => setTimeout(r, 1200));
     }
   }
 
@@ -230,14 +246,30 @@ app.post('/api/analyze-document', async (req, res) => {
     });
 
     const rawText = response.text || '{}';
-    const parsedData = JSON.parse(rawText);
+    const cleanedText = cleanJsonString(rawText);
+    const parsedData = JSON.parse(cleanedText);
 
     res.json(parsedData);
   } catch (err: any) {
     console.error('Error analyzing document:', err);
+    let userFriendlyMessage = 'حدث خطأ أثناء معالجة المستند بواسطة الذكاء الاصطناعي.';
+    const rawMsg = err?.message || String(err);
+
+    if (rawMsg.includes('RESOURCE_EXHAUSTED') || rawMsg.includes('429') || rawMsg.includes('quota')) {
+      userFriendlyMessage = 'تم بلوغ الحد الأقصى المؤقت لعدد الطلبات في الدقيقة من جوجل (Rate Limit). يرجى الانتظار 30 إلى 60 ثانية فقط ثم إعادة المحاولة.';
+    } else if (rawMsg.includes('API_KEY_INVALID') || rawMsg.includes('API key not valid') || rawMsg.includes('403')) {
+      userFriendlyMessage = 'مفتاح Gemini API غير صالح أو غير صحيح. يرجى التأكد من نسخه بدقة في الإعدادات ⚙️.';
+    } else if (rawMsg.includes('GEMINI_API_KEY_MISSING')) {
+      userFriendlyMessage = 'مفتاح Gemini API غير مهيأ. يرجى إدخاله في الإعدادات ⚙️ بأعلى الشاشة.';
+    } else if (rawMsg.includes('SyntaxError') || rawMsg.includes('JSON')) {
+      userFriendlyMessage = 'لم يتمكن النموذج من تنسيق الإجابة بشكل صحيح. يرجى إعادة المحاولة مع توضيح صورة المستند.';
+    } else {
+      userFriendlyMessage = `تعذر التحليل: ${rawMsg}`;
+    }
+
     res.status(500).json({
-      error: 'حدث خطأ أثناء معالجة المستند بواسطة الذكاء الاصطناعي.',
-      details: err?.message || String(err),
+      error: userFriendlyMessage,
+      details: rawMsg,
     });
   }
 });
@@ -276,7 +308,7 @@ app.post('/api/define-word', async (req, res) => {
       },
     });
 
-    const parsed = JSON.parse(response.text || '{}');
+    const parsed = JSON.parse(cleanJsonString(response.text || '{}'));
     res.json(parsed);
   } catch (err: any) {
     console.error('Error defining word:', err);

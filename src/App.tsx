@@ -34,17 +34,25 @@ interface SavedDocument {
 
 const STORAGE_KEY_DOCS = 'lingodoc_documents_library_v3';
 
-// Client-side image compression to bypass Vercel 4.5MB payload limits while maintaining high quality
+// Client-side image compression with bulletproof fallback to ensure uploads never fail
 function compressImage(file: File, maxWidth = 1600, maxHeight = 1600, quality = 0.85): Promise<{ base64: string; type: string }> {
-  return new Promise((resolve, reject) => {
-    if (!file.type.startsWith('image/')) {
+  return new Promise((resolve) => {
+    // Resilient fallback: read the file directly if image processing fails
+    const fallbackDirectRead = () => {
       const reader = new FileReader();
       reader.onload = () => {
-        const base64 = (reader.result as string).split(',')[1];
-        resolve({ base64, type: file.type });
+        const res = (reader.result as string) || '';
+        const base64 = res.includes(',') ? res.split(',')[1] : res;
+        resolve({ base64, type: file.type || 'image/jpeg' });
       };
-      reader.onerror = (err) => reject(err);
+      reader.onerror = () => {
+        resolve({ base64: '', type: file.type || 'image/jpeg' });
+      };
       reader.readAsDataURL(file);
+    };
+
+    if (!file.type.startsWith('image/')) {
+      fallbackDirectRead();
       return;
     }
 
@@ -52,44 +60,51 @@ function compressImage(file: File, maxWidth = 1600, maxHeight = 1600, quality = 
     reader.onload = (event) => {
       const img = new Image();
       img.onload = () => {
-        let width = img.width;
-        let height = img.height;
+        try {
+          let width = img.width;
+          let height = img.height;
 
-        if (width > height) {
-          if (width > maxWidth) {
-            height = Math.round((height * maxWidth) / width);
-            width = maxWidth;
+          if (width > height) {
+            if (width > maxWidth) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            }
+          } else {
+            if (height > maxHeight) {
+              width = Math.round((width * maxHeight) / height);
+              height = maxHeight;
+            }
           }
-        } else {
-          if (height > maxHeight) {
-            width = Math.round((width * maxHeight) / height);
-            height = maxHeight;
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            fallbackDirectRead();
+            return;
           }
+
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          const outputType = 'image/jpeg';
+          const dataUrl = canvas.toDataURL(outputType, quality);
+          const base64 = dataUrl.split(',')[1];
+          
+          resolve({ base64, type: outputType });
+        } catch {
+          fallbackDirectRead();
         }
-
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          const base64 = (reader.result as string).split(',')[1];
-          resolve({ base64, type: file.type });
-          return;
-        }
-
-        ctx.drawImage(img, 0, 0, width, height);
-        
-        const outputType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
-        const dataUrl = canvas.toDataURL(outputType, quality);
-        const base64 = dataUrl.split(',')[1];
-        
-        resolve({ base64, type: outputType });
       };
-      img.onerror = (err) => reject(err);
+      img.onerror = () => {
+        fallbackDirectRead();
+      };
       img.src = event.target?.result as string;
     };
-    reader.onerror = (err) => reject(err);
+    reader.onerror = () => {
+      fallbackDirectRead();
+    };
     reader.readAsDataURL(file);
   });
 }
@@ -221,7 +236,7 @@ export default function App() {
         setIsSettingsOpen(true);
         alert('مفتاح Gemini API غير مهيأ: يرجى إدخال مفتاح الـ API المجاني الخاص بكِ في نافذة الإعدادات التي فُتحت الآن لتفعيل الخدمة على موقع Vercel!');
       } else {
-        alert('تعذر تحليل الملف: ' + (err.message || 'خطأ غير معروف'));
+        alert(errMsg || 'تعذر قراءة المستند وتحليله.');
       }
     } finally {
       setIsLoading(false);
