@@ -43,9 +43,8 @@ async function generateWithRetry(params: {
 }) {
   const ai = getGenAI(params.customKey);
   const models = [
-    params.preferredModel || 'gemini-3.8-flash',
-    'gemini-3.1-flash-lite',
-    'gemini-flash-latest',
+    params.preferredModel || 'gemini-2.5-flash',
+    'gemini-1.5-flash',
   ];
 
   let lastError: any = null;
@@ -126,7 +125,7 @@ app.post('/api/analyze-document', async (req, res) => {
     }
 
     const response = await generateWithRetry({
-      preferredModel: 'gemini-3.8-flash',
+      preferredModel: 'gemini-2.5-flash',
       contents,
       customKey,
       config: {
@@ -254,7 +253,7 @@ app.post('/api/define-word', async (req, res) => {
     }
 
     const response = await generateWithRetry({
-      preferredModel: 'gemini-3.8-flash',
+      preferredModel: 'gemini-2.5-flash',
       contents: `ما معنى الكلمة الإنجليزية "${word}" في سياق هذه الجملة: "${sentence || ''}"؟`,
       customKey,
       config: {
@@ -295,24 +294,22 @@ app.post('/api/define-word', async (req, res) => {
 app.post('/api/tts', async (req, res) => {
   try {
     const { text, voiceName = 'Kore' } = req.body;
+    const customKey = req.headers['x-gemini-api-key'] as string || undefined;
 
     if (!text || typeof text !== 'string') {
       return res.status(400).json({ error: 'النص المطلوب نطقه غير موجود.' });
     }
 
-    const ai = getGenAI();
+    const ai = getGenAI(customKey);
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash-lite-tts',
+      model: 'gemini-2.5-flash',
       contents: [
         {
           role: 'user',
           parts: [
             {
               text,
-              speechMetadata: {
-                style: 'Clear, natural, articulate pronunciation for language learning.',
-              },
             },
           ],
         },
