@@ -18,8 +18,8 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Helper to get GoogleGenAI client
-function getGenAI() {
-  const apiKey = process.env.GEMINI_API_KEY;
+function getGenAI(customKey?: string) {
+  const apiKey = customKey || process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY is not configured in environment variables.');
   }
@@ -39,8 +39,9 @@ async function generateWithRetry(params: {
   config?: any;
   preferredModel?: string;
   maxAttempts?: number;
+  customKey?: string;
 }) {
-  const ai = getGenAI();
+  const ai = getGenAI(params.customKey);
   const models = [
     params.preferredModel || 'gemini-3.8-flash',
     'gemini-3.1-flash-lite',
@@ -73,12 +74,11 @@ async function generateWithRetry(params: {
 app.post('/api/analyze-document', async (req, res) => {
   try {
     const { fileData, mimeType, text, titleHint } = req.body;
+    const customKey = req.headers['x-gemini-api-key'] as string || undefined;
 
     if (!fileData && !text) {
       return res.status(400).json({ error: 'يرجى تقديم ملف أو نص للترجمة والتحليل.' });
     }
-
-    const ai = getGenAI();
 
     const systemInstruction = `أنت خبير لغوي ومعلم ومترجم محترف متخصص في تعليم اللغة الإنجليزية للمتحدثين بالعربية.
 مهمتك استخراج النص بدقة متناهية من المستند المرفق (سواء صورة ورقة، ماسح ضوئي، مستند PDF، أو نص مباشر)، وتقسيمه جملة بجملة (Sentence-by-Sentence).
@@ -128,6 +128,7 @@ app.post('/api/analyze-document', async (req, res) => {
     const response = await generateWithRetry({
       preferredModel: 'gemini-3.8-flash',
       contents,
+      customKey,
       config: {
         systemInstruction,
         responseMimeType: 'application/json',
@@ -246,6 +247,7 @@ app.post('/api/analyze-document', async (req, res) => {
 app.post('/api/define-word', async (req, res) => {
   try {
     const { word, sentence } = req.body;
+    const customKey = req.headers['x-gemini-api-key'] as string || undefined;
 
     if (!word) {
       return res.status(400).json({ error: 'الكلمة مطلوبة.' });
@@ -254,6 +256,7 @@ app.post('/api/define-word', async (req, res) => {
     const response = await generateWithRetry({
       preferredModel: 'gemini-3.8-flash',
       contents: `ما معنى الكلمة الإنجليزية "${word}" في سياق هذه الجملة: "${sentence || ''}"؟`,
+      customKey,
       config: {
         systemInstruction: `أنت قاموس إنجليزي-عربي فوري ودقيق للمتعلمين. أعط المعنى المحدد للكلمة في سياق الجملة، مع نوع الكلمة والمصدر ومثال توضيحي. أجب بصيغة JSON حصراً.`,
         responseMimeType: 'application/json',

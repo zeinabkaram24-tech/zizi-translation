@@ -1,5 +1,16 @@
 import { DocumentAnalysis, WordDefinitionResponse } from '../types';
 
+function getRequestHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  const storedKey = localStorage.getItem('lingodoc_custom_api_key');
+  if (storedKey) {
+    headers['x-gemini-api-key'] = storedKey.trim();
+  }
+  return headers;
+}
+
 export async function analyzeDocument(params: {
   fileData?: string;
   mimeType?: string;
@@ -8,9 +19,7 @@ export async function analyzeDocument(params: {
 }): Promise<DocumentAnalysis> {
   const response = await fetch('/api/analyze-document', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: getRequestHeaders(),
     body: JSON.stringify(params),
   });
 
@@ -25,9 +34,7 @@ export async function analyzeDocument(params: {
 export async function defineWord(word: string, sentence: string): Promise<WordDefinitionResponse> {
   const response = await fetch('/api/define-word', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: getRequestHeaders(),
     body: JSON.stringify({ word, sentence }),
   });
 
@@ -42,9 +49,7 @@ export async function defineWord(word: string, sentence: string): Promise<WordDe
 export async function fetchGeminiTTS(text: string, voiceName: string = 'Kore'): Promise<string> {
   const response = await fetch('/api/tts', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: getRequestHeaders(),
     body: JSON.stringify({ text, voiceName }),
   });
 

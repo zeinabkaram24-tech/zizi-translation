@@ -14,6 +14,7 @@ import {
   BookmarkCheck,
   ChevronDown,
   Layers,
+  Settings,
 } from 'lucide-react';
 import { DocumentAnalysis, SavedWord, DocumentPage } from './types';
 import { analyzeDocument, defineWord } from './services/api';
@@ -120,6 +121,10 @@ export default function App() {
   // Custom Confirmation Overlays
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showClearVocabConfirm, setShowClearVocabConfirm] = useState(false);
+
+  // API Key Settings Overlay
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [customApiKey, setCustomApiKey] = useState(localStorage.getItem('lingodoc_custom_api_key') || '');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -440,16 +445,27 @@ export default function App() {
             </div>
 
             {/* Vocabulary Drawer Trigger */}
-            <button
-              onClick={() => setIsVocabModalOpen(true)}
-              className="inline-flex items-center gap-1 px-3 py-1.5 sm:px-4 sm:py-2 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-200 text-[11px] sm:text-sm font-bold rounded-lg sm:rounded-xl shadow-2xs transition-all cursor-pointer"
-            >
-              <BookmarkCheck className="w-3.5 h-3.5 text-amber-700" />
-              <span>المفردات</span>
-              <span className="w-4 h-4 sm:w-5 sm:h-5 bg-amber-600 text-white rounded-full flex items-center justify-center text-[10px] sm:text-[11px] font-bold">
-                {savedWords.length}
-              </span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsVocabModalOpen(true)}
+                className="inline-flex items-center gap-1 px-3 py-1.5 sm:px-4 sm:py-2 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-200 text-[11px] sm:text-sm font-bold rounded-lg sm:rounded-xl shadow-2xs transition-all cursor-pointer"
+              >
+                <BookmarkCheck className="w-3.5 h-3.5 text-amber-700" />
+                <span>المفردات</span>
+                <span className="w-4 h-4 sm:w-5 sm:h-5 bg-amber-600 text-white rounded-full flex items-center justify-center text-[10px] sm:text-[11px] font-bold">
+                  {savedWords.length}
+                </span>
+              </button>
+
+              {/* API Key Settings Gear Icon */}
+              <button
+                onClick={() => setIsSettingsOpen(true)}
+                className="p-1.5 sm:p-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 hover:text-slate-900 rounded-lg sm:rounded-xl shadow-2xs transition-all cursor-pointer flex items-center justify-center"
+                title="إعدادات مفتاح Gemini API"
+              >
+                <Settings className="w-4 h-4 text-slate-600" />
+              </button>
+            </div>
           </div>
 
         </div>
@@ -1092,6 +1108,72 @@ export default function App() {
                 className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer"
               >
                 إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custom API Key Settings Modal */}
+      {isSettingsOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 max-w-md w-full shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+              <div className="flex items-center gap-2">
+                <Settings className="w-5 h-5 text-indigo-600" />
+                <h3 className="text-base font-bold text-slate-900">إعدادات مفتاح Gemini API</h3>
+              </div>
+              <button
+                onClick={() => setIsSettingsOpen(false)}
+                className="p-1 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+              إذا واجهتِ مشكلة في الترجمة خارج بيئة التطوير (مثل Vercel)، يمكنكِ إضافة مفتاح API الخاص بكِ مجاناً وسيقوم السيرفر باستخدامه فوراً لتحليل وقراءة كتبكِ بأعلى دقة وجودة.
+            </p>
+
+            <div className="mb-4">
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">مفتاح الـ API الخاص بكِ:</label>
+              <input
+                type="password"
+                value={customApiKey}
+                onChange={(e) => setCustomApiKey(e.target.value)}
+                placeholder="AIzaSy..."
+                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm font-mono focus:outline-hidden focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+
+            <p className="text-[10px] text-slate-400 bg-slate-50 p-2.5 rounded-xl border border-slate-150 mb-5 leading-relaxed">
+              💡 <strong>كيف تحصلين على مفتاح مجاني؟</strong><br />
+              اذهبي لموقع <a href="https://aistudio.google.com" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline font-bold font-english">Google AI Studio</a>، واضغطي على <strong>Get API Key</strong> لتوليد مفتاح مجاني تماماً خلال ثوانٍ معدودة.
+            </p>
+
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => {
+                  if (customApiKey.trim()) {
+                    localStorage.setItem('lingodoc_custom_api_key', customApiKey.trim());
+                  } else {
+                    localStorage.removeItem('lingodoc_custom_api_key');
+                  }
+                  setIsSettingsOpen(false);
+                }}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold shadow-xs cursor-pointer"
+              >
+                حفظ الإعدادات
+              </button>
+              <button
+                onClick={() => {
+                  setCustomApiKey('');
+                  localStorage.removeItem('lingodoc_custom_api_key');
+                  setIsSettingsOpen(false);
+                }}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer"
+              >
+                مسح المفتاح
               </button>
             </div>
           </div>
