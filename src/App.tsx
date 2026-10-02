@@ -33,6 +33,66 @@ interface SavedDocument {
 
 const STORAGE_KEY_DOCS = 'lingodoc_documents_library_v3';
 
+// Client-side image compression to bypass Vercel 4.5MB payload limits while maintaining high quality
+function compressImage(file: File, maxWidth = 1600, maxHeight = 1600, quality = 0.85): Promise<{ base64: string; type: string }> {
+  return new Promise((resolve, reject) => {
+    if (!file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = (reader.result as string).split(',')[1];
+        resolve({ base64, type: file.type });
+      };
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxWidth) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          const base64 = (reader.result as string).split(',')[1];
+          resolve({ base64, type: file.type });
+          return;
+        }
+
+        ctx.drawImage(img, 0, 0, width, height);
+        
+        const outputType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+        const dataUrl = canvas.toDataURL(outputType, quality);
+        const base64 = dataUrl.split(',')[1];
+        
+        resolve({ base64, type: outputType });
+      };
+      img.onerror = (err) => reject(err);
+      img.src = event.target?.result as string;
+    };
+    reader.onerror = (err) => reject(err);
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function App() {
   const [documents, setDocuments] = useState<SavedDocument[]>([]);
   const [activeDocId, setActiveDocId] = useState<string>('');
@@ -67,13 +127,13 @@ export default function App() {
   useEffect(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY_DOCS);
-      if (stored) {
+      if (stored !== null) {
         const parsed = JSON.parse(stored) as SavedDocument[];
+        setDocuments(parsed);
         if (parsed && parsed.length > 0) {
-          setDocuments(parsed);
           setActiveDocId(parsed[0].id);
-          return;
         }
+        return;
       }
     } catch (e) {
       console.error('Failed to load documents library', e);
@@ -116,48 +176,47 @@ export default function App() {
   const savedWordSet = new Set(savedWords.map((w) => w.word.toLowerCase()));
 
   // File upload handler
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsLoading(true);
-    setLoadingText('جاري قراءة الصفحة وترجمتها بالذكاء الاصطناعي...');
+    setLoadingText('جاري تحسين جودة الصورة وقراءتها بالذكاء الاصطناعي...');
     stopSpeaking();
     setPlayingSentenceIndex(null);
     setPlayingWordId(null);
 
-    const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const base64 = (reader.result as string).split(',')[1];
-        const res = await analyzeDocument({
-          fileData: base64,
-          mimeType: file.type || 'image/jpeg',
-          titleHint: file.name,
-        });
+    try {
+      // Compress the image before upload if it is an image to fit into Vercel limit
+      const { base64, type } = await compressImage(file);
+      
+      setLoadingText('جاري قراءة الصفحة وترجمتها بالذكاء الاصطناعي...');
+      const res = await analyzeDocument({
+        fileData: base64,
+        mimeType: type,
+        titleHint: file.name,
+      });
 
-        // Add as a new document to the library
-        const newDoc: SavedDocument = {
-          id: `doc-${Date.now()}`,
-          documentTitle: res.documentTitle || file.name,
-          overviewSummary: res.overviewSummary || 'مستند مترجم حديثاً',
-          pages: res.pages,
-          savedWords: [],
-          fullTextWithFormatting: res.fullTextWithFormatting,
-          createdAt: new Date().toISOString(),
-        };
+      // Add as a new document to the library
+      const newDoc: SavedDocument = {
+        id: `doc-${Date.now()}`,
+        documentTitle: res.documentTitle || file.name,
+        overviewSummary: res.overviewSummary || 'مستند مترجم حديثاً',
+        pages: res.pages,
+        savedWords: [],
+        fullTextWithFormatting: res.fullTextWithFormatting,
+        createdAt: new Date().toISOString(),
+      };
 
-        setDocuments((prev) => [newDoc, ...prev]);
-        setActiveDocId(newDoc.id);
-      } catch (err: any) {
-        alert('تعذر تحليل الملف: ' + (err.message || 'خطأ غير معروف'));
-      } finally {
-        setIsLoading(false);
-        setLoadingText('');
-        if (fileInputRef.current) fileInputRef.current.value = '';
-      }
-    };
-    reader.readAsDataURL(file);
+      setDocuments((prev) => [newDoc, ...prev]);
+      setActiveDocId(newDoc.id);
+    } catch (err: any) {
+      alert('تعذر تحليل الملف: ' + (err.message || 'خطأ غير معروف'));
+    } finally {
+      setIsLoading(false);
+      setLoadingText('');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   // Play audio for an English sentence
