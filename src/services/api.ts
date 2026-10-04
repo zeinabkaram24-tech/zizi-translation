@@ -33,13 +33,22 @@ export async function analyzeDocument(params: {
   text?: string;
   titleHint?: string;
 }): Promise<DocumentAnalysis> {
+  const hasCustomKey = !!localStorage.getItem('lingodoc_custom_api_key');
+
+  // CRITICAL FIX: If user has a custom API Key saved, bypass the backend completely and call Gemini directly
+  // from the browser! This avoids corporate proxies, header stripping, and Google AI Studio login/iframe redirects (302)!
+  if (hasCustomKey) {
+    console.info('Custom API Key found. Calling Gemini directly from the browser (bypassing backend redirects).');
+    return await analyzeDocumentClientSide(params);
+  }
+
   try {
     const response = await fetch('/api/analyze-document', {
       method: 'POST',
       headers: getRequestHeaders(),
       body: JSON.stringify({
         ...params,
-        customApiKey: getCustomApiKeyBodyParam(), // Pass in body to prevent reverse proxy header stripping!
+        customApiKey: getCustomApiKeyBodyParam(),
       }),
     });
 
@@ -47,22 +56,87 @@ export async function analyzeDocument(params: {
       return await response.json();
     }
 
-    // Fallback to client-side direct calling if endpoint doesn't exist (e.g. 404 in static deploy)
-    if (response.status === 404) {
-      console.warn('Backend server returned 404, falling back to direct browser Gemini API.');
-      return await analyzeDocumentClientSide(params);
-    }
-
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || errorData.details || 'فشل تحليل المستند');
+    // Fallback to client-side direct calling if endpoint returns 404/302 or redirects
+    console.warn('Backend server returned non-OK response, falling back to direct browser Gemini API.');
+    return await analyzeDocumentClientSide(params);
   } catch (err: any) {
-    const errMsg = err.message || '';
-    if (errMsg.includes('404') || errMsg.includes('Failed to fetch') || errMsg.includes('fetch')) {
-      console.warn('Network issue or backend 404. Falling back to direct browser Gemini API:', err);
-      return await analyzeDocumentClientSide(params);
-    }
-    throw err;
+    console.warn('Backend server threw error, falling back to direct browser Gemini API:', err);
+    return await analyzeDocumentClientSide(params);
   }
+}
+
+async function callGeminiWithModel(
+  ai: any,
+  modelName: string,
+  contents: any[],
+  systemInstruction: string
+): Promise<DocumentAnalysis> {
+  const response = await ai.models.generateContent({
+    model: modelName,
+    contents,
+    config: {
+      systemInstruction,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          documentTitle: { type: Type.STRING },
+          overviewSummary: { type: Type.STRING },
+          totalSentences: { type: Type.INTEGER },
+          fullTextWithFormatting: { type: Type.STRING },
+          pages: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                pageNumber: { type: Type.INTEGER },
+                pageTitle: { type: Type.STRING },
+                sentences: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      sentenceIndex: { type: Type.INTEGER },
+                      english: { type: Type.STRING },
+                      contextualTranslation: { type: Type.STRING },
+                      literalTranslation: { type: Type.STRING },
+                      linguisticNote: { type: Type.STRING },
+                      vocabulary: {
+                        type: Type.ARRAY,
+                        items: {
+                          type: Type.OBJECT,
+                          properties: {
+                            word: { type: Type.STRING },
+                            arabicMeaning: { type: Type.STRING },
+                            partOfSpeech: { type: Type.STRING },
+                            phonetic: { type: Type.STRING },
+                          },
+                          required: ['word', 'arabicMeaning'],
+                        },
+                      },
+                    },
+                    required: ['sentenceIndex', 'english', 'contextualTranslation', 'literalTranslation'],
+                  },
+                },
+              },
+              required: ['pageNumber', 'sentences'],
+            },
+          },
+        },
+        required: ['documentTitle', 'overviewSummary', 'pages'],
+      },
+    },
+  });
+
+  const rawText = response.text || '{}';
+  const firstBrace = rawText.indexOf('{');
+  const lastBrace = rawText.lastIndexOf('}');
+  let cleaned = rawText;
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    cleaned = rawText.substring(firstBrace, lastBrace + 1);
+  }
+  
+  return JSON.parse(cleaned);
 }
 
 async function analyzeDocumentClientSide(params: {
@@ -130,75 +204,26 @@ async function analyzeDocumentClientSide(params: {
     });
   }
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents,
-    config: {
-      systemInstruction,
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          documentTitle: { type: Type.STRING },
-          overviewSummary: { type: Type.STRING },
-          totalSentences: { type: Type.INTEGER },
-          fullTextWithFormatting: { type: Type.STRING },
-          pages: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                pageNumber: { type: Type.INTEGER },
-                pageTitle: { type: Type.STRING },
-                sentences: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      sentenceIndex: { type: Type.INTEGER },
-                      english: { type: Type.STRING },
-                      contextualTranslation: { type: Type.STRING },
-                      literalTranslation: { type: Type.STRING },
-                      linguisticNote: { type: Type.STRING },
-                      vocabulary: {
-                        type: Type.ARRAY,
-                        items: {
-                          type: Type.OBJECT,
-                          properties: {
-                            word: { type: Type.STRING },
-                            arabicMeaning: { type: Type.STRING },
-                            partOfSpeech: { type: Type.STRING },
-                            phonetic: { type: Type.STRING },
-                          },
-                          required: ['word', 'arabicMeaning'],
-                        },
-                      },
-                    },
-                    required: ['sentenceIndex', 'english', 'contextualTranslation', 'literalTranslation'],
-                  },
-                },
-              },
-              required: ['pageNumber', 'sentences'],
-            },
-          },
-        },
-        required: ['documentTitle', 'overviewSummary', 'pages'],
-      },
-    },
-  });
-
-  const rawText = response.text || '{}';
-  const firstBrace = rawText.indexOf('{');
-  const lastBrace = rawText.lastIndexOf('}');
-  let cleaned = rawText;
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    cleaned = rawText.substring(firstBrace, lastBrace + 1);
+  try {
+    // Primary Client-Side Model (Gemini 2.5 Flash is ultra fast and has amazing OCR capabilities)
+    return await callGeminiWithModel(ai, 'gemini-2.5-flash', contents, systemInstruction);
+  } catch (err: any) {
+    console.warn('Direct client call with gemini-2.5-flash failed, falling back to gemini-1.5-flash:', err);
+    try {
+      return await callGeminiWithModel(ai, 'gemini-1.5-flash', contents, systemInstruction);
+    } catch (err2: any) {
+      console.error('All client-side models failed:', err2);
+      throw new Error(`تعذر على الذكاء الاصطناعي معالجة الصورة. تأكد من صحة مفتاح الـ API ووضوح الصفحة. الخطأ: ${err2.message || err2}`);
+    }
   }
-  
-  return JSON.parse(cleaned);
 }
 
 export async function defineWord(word: string, sentence: string): Promise<WordDefinitionResponse> {
+  const hasCustomKey = !!localStorage.getItem('lingodoc_custom_api_key');
+  if (hasCustomKey) {
+    return await defineWordClientSide(word, sentence);
+  }
+
   try {
     const response = await fetch('/api/define-word', {
       method: 'POST',
@@ -206,7 +231,7 @@ export async function defineWord(word: string, sentence: string): Promise<WordDe
       body: JSON.stringify({
         word,
         sentence,
-        customApiKey: getCustomApiKeyBodyParam(), // Pass key in JSON body to prevent header stripping
+        customApiKey: getCustomApiKeyBodyParam(),
       }),
     });
 
@@ -214,28 +239,18 @@ export async function defineWord(word: string, sentence: string): Promise<WordDe
       return await response.json();
     }
 
-    if (response.status === 404) {
-      return await defineWordClientSide(word, sentence);
-    }
-
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || 'تعذر جلب تفاصيل الكلمة');
+    return await defineWordClientSide(word, sentence);
   } catch (err) {
     return await defineWordClientSide(word, sentence);
   }
 }
 
-async function defineWordClientSide(word: string, sentence: string): Promise<WordDefinitionResponse> {
-  const ai = getClientGenAI();
-  if (!ai) {
-    throw new Error('GEMINI_API_KEY_MISSING');
-  }
-
+async function callDefineWordModel(ai: any, modelName: string, prompt: string, systemInstruction: string): Promise<WordDefinitionResponse> {
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: `ما معنى الكلمة الإنجليزية "${word}" في سياق هذه الجملة: "${sentence || ''}"؟`,
+    model: modelName,
+    contents: prompt,
     config: {
-      systemInstruction: `أنت قاموس إنجليزي-عربي فوري ودقيق للمتعلمين. أعط المعنى المحدد للكلمة في سياق الجملة، مع نوع الكلمة والمصدر ومثال توضيحي. أجب بصيغة JSON حصراً.`,
+      systemInstruction,
       responseMimeType: 'application/json',
       responseSchema: {
         type: Type.OBJECT,
@@ -265,7 +280,28 @@ async function defineWordClientSide(word: string, sentence: string): Promise<Wor
   return JSON.parse(cleaned);
 }
 
+async function defineWordClientSide(word: string, sentence: string): Promise<WordDefinitionResponse> {
+  const ai = getClientGenAI();
+  if (!ai) {
+    throw new Error('GEMINI_API_KEY_MISSING');
+  }
+
+  const prompt = `ما معنى الكلمة الإنجليزية "${word}" في سياق هذه الجملة: "${sentence || ''}"؟`;
+  const systemInstruction = `أنت قاموس إنجليزي-عربي فوري ودقيق للمتعلمين. أعط المعنى المحدد للكلمة في سياق الجملة، مع نوع الكلمة والمصدر ومثال توضيحي. أجب بصيغة JSON حصراً.`;
+
+  try {
+    return await callDefineWordModel(ai, 'gemini-2.5-flash', prompt, systemInstruction);
+  } catch {
+    return await callDefineWordModel(ai, 'gemini-1.5-flash', prompt, systemInstruction);
+  }
+}
+
 export async function fetchGeminiTTS(text: string, voiceName: string = 'Kore'): Promise<string> {
+  const hasCustomKey = !!localStorage.getItem('lingodoc_custom_api_key');
+  if (hasCustomKey) {
+    return await fetchGeminiTTSClientSide(text, voiceName);
+  }
+
   try {
     const response = await fetch('/api/tts', {
       method: 'POST',
@@ -273,7 +309,7 @@ export async function fetchGeminiTTS(text: string, voiceName: string = 'Kore'): 
       body: JSON.stringify({
         text,
         voiceName,
-        customApiKey: getCustomApiKeyBodyParam(), // Pass key in JSON body to prevent header stripping
+        customApiKey: getCustomApiKeyBodyParam(),
       }),
     });
 
@@ -282,11 +318,7 @@ export async function fetchGeminiTTS(text: string, voiceName: string = 'Kore'): 
       return `data:${data.mimeType};base64,${data.audioBase64}`;
     }
 
-    if (response.status === 404) {
-      return await fetchGeminiTTSClientSide(text, voiceName);
-    }
-
-    throw new Error('فشل توليد الصوت عبر الذكاء الاصطناعي');
+    return await fetchGeminiTTSClientSide(text, voiceName);
   } catch (err) {
     return await fetchGeminiTTSClientSide(text, voiceName);
   }
