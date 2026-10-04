@@ -15,6 +15,8 @@ import {
   ChevronDown,
   Layers,
   Settings,
+  Plus,
+  ClipboardList,
 } from 'lucide-react';
 import { DocumentAnalysis, SavedWord, DocumentPage } from './types';
 import { analyzeDocument, defineWord } from './services/api';
@@ -36,19 +38,26 @@ const STORAGE_KEY_DOCS = 'lingodoc_documents_library_v3';
 
 // Auto-crop solid black bars from mobile screenshots to maximize text legibility
 function calculateCropArea(img: HTMLImageElement): { x: number; y: number; w: number; h: number } {
+  const fullArea = { x: 0, y: 0, w: img.width, h: img.height };
+  
+  // Rule 1: Only crop if the image is a tall portrait image (typical phone screenshots have aspect ratio >= 1.5)
+  if (img.height / img.width < 1.5) {
+    return fullArea;
+  }
+
   const canvas = document.createElement('canvas');
   // Use a fast, small canvas for pixel scanning
-  canvas.width = Math.min(img.width, 600);
+  canvas.width = Math.min(img.width, 300);
   canvas.height = Math.round((img.height * canvas.width) / img.width);
   const ctx = canvas.getContext('2d');
-  if (!ctx) return { x: 0, y: 0, w: img.width, h: img.height };
+  if (!ctx) return fullArea;
   
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   let imgData;
   try {
     imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   } catch (e) {
-    return { x: 0, y: 0, w: img.width, h: img.height };
+    return fullArea;
   }
 
   const data = imgData.data;
@@ -58,36 +67,36 @@ function calculateCropArea(img: HTMLImageElement): { x: number; y: number; w: nu
   let top = 0;
   let bottom = h - 1;
 
-  // Threshold to consider a pixel "dark/black" (R,G,B < 40)
-  const isDark = (r: number, g: number, b: number) => r < 40 && g < 40 && b < 40;
+  // Rule 2: Very strict threshold for absolute black (R,G,B < 15) to avoid cropping camera shadows
+  const isPureBlack = (r: number, g: number, b: number) => r < 15 && g < 15 && b < 15;
 
-  // Find first non-black row from top
+  // Scan top-down to find first row that is NOT solid black
   for (let y = 0; y < h; y++) {
-    let isRowDark = true;
-    for (let x = 0; x < w; x += Math.max(1, Math.floor(w / 15))) {
+    let isRowBlack = true;
+    for (let x = 0; x < w; x += 2) {
       const idx = (y * w + x) * 4;
-      if (!isDark(data[idx], data[idx + 1], data[idx + 2])) {
-        isRowDark = false;
+      if (!isPureBlack(data[idx], data[idx + 1], data[idx + 2])) {
+        isRowBlack = false;
         break;
       }
     }
-    if (!isRowDark) {
+    if (!isRowBlack) {
       top = y;
       break;
     }
   }
 
-  // Find last non-black row from bottom
+  // Scan bottom-up to find last row that is NOT solid black
   for (let y = h - 1; y >= 0; y--) {
-    let isRowDark = true;
-    for (let x = 0; x < w; x += Math.max(1, Math.floor(w / 15))) {
+    let isRowBlack = true;
+    for (let x = 0; x < w; x += 2) {
       const idx = (y * w + x) * 4;
-      if (!isDark(data[idx], data[idx + 1], data[idx + 2])) {
-        isRowDark = false;
+      if (!isPureBlack(data[idx], data[idx + 1], data[idx + 2])) {
+        isRowBlack = false;
         break;
       }
     }
-    if (!isRowDark) {
+    if (!isRowBlack) {
       bottom = y;
       break;
     }
@@ -97,12 +106,21 @@ function calculateCropArea(img: HTMLImageElement): { x: number; y: number; w: nu
   let originalTop = Math.floor(top * scaleY);
   let originalBottom = Math.floor(bottom * scaleY);
 
-  // If black bars are not significant (less than 10% of height), don't crop
-  if (originalBottom <= originalTop || (originalBottom - originalTop) < img.height * 0.3) {
-    return { x: 0, y: 0, w: img.width, h: img.height };
+  // Rule 3: Only crop if the detected black bars are significant (at least 5% on top or bottom)
+  const topBarPercentage = originalTop / img.height;
+  const bottomBarPercentage = (img.height - originalBottom) / img.height;
+
+  if (topBarPercentage < 0.05 && bottomBarPercentage < 0.05) {
+    return fullArea;
   }
 
-  // Add slight margin padding to avoid clipping top or bottom letters
+  // Rule 4: Ensure we don't crop too aggressively (cropped height must be at least 40% of original height)
+  const croppedHeight = originalBottom - originalTop;
+  if (croppedHeight < img.height * 0.4) {
+    return fullArea;
+  }
+
+  // Add margin padding to prevent clipping top or bottom text
   originalTop = Math.max(0, originalTop - 15);
   originalBottom = Math.min(img.height - 1, originalBottom + 15);
 
@@ -219,6 +237,11 @@ export default function App() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showClearVocabConfirm, setShowClearVocabConfirm] = useState(false);
 
+  // New: Add New Page modal states
+  const [isAddPageModalOpen, setIsAddPageModalOpen] = useState(false);
+  const [pastedText, setPastedText] = useState('');
+  const [pastedTitle, setPastedTitle] = useState('');
+
   // API Key Settings Overlay
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [customApiKey, setCustomApiKey] = useState(localStorage.getItem('lingodoc_custom_api_key') || '');
@@ -283,6 +306,7 @@ export default function App() {
     if (!file) return;
 
     setIsLoading(true);
+    setIsAddPageModalOpen(false); // Close the add page modal
     setLoadingText('جاري تحسين جودة الصورة وقراءتها بالذكاء الاصطناعي...');
     stopSpeaking();
     setPlayingSentenceIndex(null);
@@ -330,6 +354,58 @@ export default function App() {
       setIsLoading(false);
       setLoadingText('');
       if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  // Submit raw pasted text for translation and analysis
+  const handleTextSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pastedText.trim()) return;
+
+    setIsLoading(true);
+    setIsAddPageModalOpen(false);
+    setLoadingText('جاري تحليل وترجمة النص المكتوب بالذكاء الاصطناعي...');
+    stopSpeaking();
+    setPlayingSentenceIndex(null);
+    setPlayingWordId(null);
+
+    try {
+      const res = await analyzeDocument({
+        text: pastedText,
+        titleHint: pastedTitle.trim() || 'نص مضاف يدوياً',
+      });
+
+      const totalSentencesFound = res.pages?.reduce((acc, p) => acc + (p.sentences?.length || 0), 0) || 0;
+      if (totalSentencesFound === 0) {
+        alert('لم يتمكن الذكاء الاصطناعي من قراءة أو تقسيم جمل إنجليزية من هذا النص. يرجى كتابة نص إنجليزي واضح.');
+        return;
+      }
+
+      const newDoc: SavedDocument = {
+        id: `doc-${Date.now()}`,
+        documentTitle: pastedTitle.trim() || res.documentTitle || 'نص مترجم',
+        overviewSummary: res.overviewSummary || 'مستند نصي مترجم',
+        pages: res.pages,
+        savedWords: [],
+        fullTextWithFormatting: pastedText,
+        createdAt: new Date().toISOString(),
+      };
+
+      setDocuments((prev) => [newDoc, ...prev]);
+      setActiveDocId(newDoc.id);
+      setPastedText('');
+      setPastedTitle('');
+    } catch (err: any) {
+      const errMsg = err.message || '';
+      if (errMsg.includes('GEMINI_API_KEY_MISSING') || errMsg.includes('GEMINI_API_KEY') || errMsg.includes('not configured')) {
+        setIsSettingsOpen(true);
+        alert('مفتاح Gemini API غير مهيأ: يرجى إدخال مفتاح الـ API الخاص بكِ في الإعدادات لتفعيل الخدمة!');
+      } else {
+        alert(errMsg || 'تعذر تحليل وترجمة النص.');
+      }
+    } finally {
+      setIsLoading(false);
+      setLoadingText('');
     }
   };
 
@@ -520,12 +596,12 @@ export default function App() {
                 className="hidden"
               />
               <button
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => setIsAddPageModalOpen(true)}
                 disabled={isLoading}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-[11px] sm:text-sm font-bold rounded-lg sm:rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-50"
               >
-                <Upload className="w-3.5 h-3.5" />
-                <span>رفع صفحة</span>
+                <Plus className="w-3.5 h-3.5" />
+                <span>إضافة صفحة</span>
               </button>
             </div>
           </div>
@@ -1291,6 +1367,96 @@ export default function App() {
               >
                 مسح المفتاح
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* New Modal: Add New Study Page (Upload or Paste Text) */}
+      {isAddPageModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl border border-slate-200 w-full max-w-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-indigo-50/50">
+              <div className="flex items-center gap-2">
+                <BookOpen className="w-5 h-5 text-indigo-600 animate-pulse" />
+                <h3 className="text-sm sm:text-base font-bold text-slate-900">إضافة صفحة جديدة للدراسة</h3>
+              </div>
+              <button
+                onClick={() => setIsAddPageModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 sm:p-6 space-y-6 max-h-[80vh] overflow-y-auto">
+              
+              {/* Option 1: File / Camera Upload */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col items-center text-center">
+                <span className="text-2xl mb-2">📸 / 📄</span>
+                <h4 className="text-xs sm:text-sm font-bold text-slate-800 mb-1">الخيار الأول: تصوير صفحة كتاب أو لقطة شاشة</h4>
+                <p className="text-[10px] sm:text-xs text-slate-500 mb-4 max-w-sm leading-relaxed">
+                  التقطي صورة واضحة لصفحة كتابك الإنجليزي أو لقطة شاشة، وسيقوم الذكاء الاصطناعي باستخراج الكلمات والجمل فوراً.
+                </p>
+                <button
+                  onClick={() => {
+                    fileInputRef.current?.click();
+                  }}
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>رفع صورة أو لقطة شاشة</span>
+                </button>
+              </div>
+
+              {/* Divider */}
+              <div className="relative flex py-1 items-center">
+                <div className="flex-grow border-t border-slate-200"></div>
+                <span className="flex-shrink mx-4 text-[10px] font-bold text-slate-400 uppercase">أو (أدخلِ نص مباشرة)</span>
+                <div className="flex-grow border-t border-slate-200"></div>
+              </div>
+
+              {/* Option 2: Paste Direct Text */}
+              <form onSubmit={handleTextSubmit} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                    الخيار الثاني: لصق أو كتابة نص إنجليزي مباشرة ✍️
+                  </label>
+                  <textarea
+                    value={pastedText}
+                    onChange={(e) => setPastedText(e.target.value)}
+                    placeholder="انسخي الفقرة الإنجليزية من أي مكان والصقيها هنا... (مثال: Once upon a time, there was a student...)"
+                    rows={4}
+                    className="w-full rounded-2xl border border-slate-200 p-3 text-xs sm:text-sm font-english leading-relaxed focus:outline-hidden focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-left"
+                    dir="ltr"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    عنوان الصفحة (اختياري)
+                  </label>
+                  <input
+                    type="text"
+                    value={pastedTitle}
+                    onChange={(e) => setPastedTitle(e.target.value)}
+                    placeholder="مثال: مقدمة كتاب إدارة المشاريع"
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-xs focus:outline-hidden focus:border-indigo-500"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={!pastedText.trim()}
+                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-40 flex items-center justify-center gap-1.5"
+                >
+                  <ClipboardList className="w-4 h-4" />
+                  <span>تحليل وترجمة النص المكتوب</span>
+                </button>
+              </form>
             </div>
           </div>
         </div>
