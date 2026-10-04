@@ -205,15 +205,20 @@ async function analyzeDocumentClientSide(params: {
   }
 
   try {
-    // Primary Client-Side Model (Gemini 2.5 Flash is ultra fast and has amazing OCR capabilities)
-    return await callGeminiWithModel(ai, 'gemini-2.5-flash', contents, systemInstruction);
+    // Primary Client-Side Model (Gemini 3.8 Flash is ultra fast and guaranteed to be supported in v1beta)
+    return await callGeminiWithModel(ai, 'gemini-3.8-flash', contents, systemInstruction);
   } catch (err: any) {
-    console.warn('Direct client call with gemini-2.5-flash failed, falling back to gemini-1.5-flash:', err);
+    console.warn('Direct client call with gemini-3.8-flash failed, trying gemini-2.5-flash:', err);
     try {
-      return await callGeminiWithModel(ai, 'gemini-1.5-flash', contents, systemInstruction);
+      return await callGeminiWithModel(ai, 'gemini-2.5-flash', contents, systemInstruction);
     } catch (err2: any) {
-      console.error('All client-side models failed:', err2);
-      throw new Error(`تعذر على الذكاء الاصطناعي معالجة الصورة. تأكد من صحة مفتاح الـ API ووضوح الصفحة. الخطأ: ${err2.message || err2}`);
+      console.warn('Direct client call with gemini-2.5-flash failed, trying gemini-3.1-flash-lite:', err2);
+      try {
+        return await callGeminiWithModel(ai, 'gemini-3.1-flash-lite', contents, systemInstruction);
+      } catch (err3: any) {
+        console.error('All client-side models failed:', err3);
+        throw new Error(`تعذر على الذكاء الاصطناعي معالجة الصورة. تأكد من صحة مفتاح الـ API الخاص بكِ ووضوح الصفحة. الخطأ: ${err3.message || err3}`);
+      }
     }
   }
 }
@@ -290,9 +295,13 @@ async function defineWordClientSide(word: string, sentence: string): Promise<Wor
   const systemInstruction = `أنت قاموس إنجليزي-عربي فوري ودقيق للمتعلمين. أعط المعنى المحدد للكلمة في سياق الجملة، مع نوع الكلمة والمصدر ومثال توضيحي. أجب بصيغة JSON حصراً.`;
 
   try {
-    return await callDefineWordModel(ai, 'gemini-2.5-flash', prompt, systemInstruction);
+    return await callDefineWordModel(ai, 'gemini-3.8-flash', prompt, systemInstruction);
   } catch {
-    return await callDefineWordModel(ai, 'gemini-1.5-flash', prompt, systemInstruction);
+    try {
+      return await callDefineWordModel(ai, 'gemini-2.5-flash', prompt, systemInstruction);
+    } catch {
+      return await callDefineWordModel(ai, 'gemini-3.1-flash-lite', prompt, systemInstruction);
+    }
   }
 }
 
