@@ -351,7 +351,7 @@ export default function App() {
       const errMsg = err.message || '';
       if (errMsg.includes('GEMINI_API_KEY_MISSING') || errMsg.includes('GEMINI_API_KEY') || errMsg.includes('not configured')) {
         setIsSettingsOpen(true);
-        alert('مفتاح Gemini API غير مهيأ: يرجى إدخال مفتاح الـ API المجاني الخاص بكِ في نافذة الإعدادات التي فُتحت الآن لتفعيل الخدمة على موقع Vercel!');
+        alert('مفتاح Gemini API غير مهيأ للتشغيل الخارجي! ⚙️\n\nلقد قمتِ بفتح التطبيق خارج بيئة التطوير (على الرابط المنشور). لتتمكني من الترجمة والتحليل مجاناً، يرجى إدخال مفتاح الـ API المجاني الخاص بكِ من جوجل في نافذة الإعدادات التي فُتحت الآن، لتبدأ الخدمة بالعمل فوراً على هاتفكِ ولابتوبكِ!');
       } else {
         alert(errMsg || 'تعذر قراءة المستند وتحليله.');
       }
@@ -404,7 +404,7 @@ export default function App() {
       const errMsg = err.message || '';
       if (errMsg.includes('GEMINI_API_KEY_MISSING') || errMsg.includes('GEMINI_API_KEY') || errMsg.includes('not configured')) {
         setIsSettingsOpen(true);
-        alert('مفتاح Gemini API غير مهيأ: يرجى إدخال مفتاح الـ API الخاص بكِ في الإعدادات لتفعيل الخدمة!');
+        alert('مفتاح Gemini API غير مهيأ للتشغيل الخارجي! ⚙️\n\nلقد قمتِ بفتح التطبيق خارج بيئة التطوير (على الرابط المنشور). لتتمكني من الترجمة والتحليل مجاناً، يرجى إدخال مفتاح الـ API المجاني الخاص بكِ من جوجل في نافذة الإعدادات التي فُتحت الآن، لتبدأ الخدمة بالعمل فوراً على هاتفكِ ولابتوبكِ!');
       } else {
         alert(errMsg || 'تعذر تحليل وترجمة النص.');
       }

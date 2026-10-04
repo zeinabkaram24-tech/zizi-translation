@@ -114,8 +114,8 @@ async function generateWithRetry(params: {
 // 1. Analyze Document / Image / PDF / Text Endpoint
 app.post('/api/analyze-document', async (req, res) => {
   try {
-    const { fileData, mimeType, text, titleHint } = req.body;
-    const customKey = req.headers['x-gemini-api-key'] as string || undefined;
+    const { fileData, mimeType, text, titleHint, customApiKey } = req.body;
+    const customKey = customApiKey || req.headers['x-gemini-api-key'] as string || undefined;
 
     if (!fileData && !text) {
       return res.status(400).json({ error: 'يرجى تقديم ملف أو نص للترجمة والتحليل.' });
@@ -312,8 +312,8 @@ app.post('/api/analyze-document', async (req, res) => {
 // 2. Define Single Word in Sentence Context
 app.post('/api/define-word', async (req, res) => {
   try {
-    const { word, sentence } = req.body;
-    const customKey = req.headers['x-gemini-api-key'] as string || undefined;
+    const { word, sentence, customApiKey } = req.body;
+    const customKey = customApiKey || req.headers['x-gemini-api-key'] as string || undefined;
 
     if (!word) {
       return res.status(400).json({ error: 'الكلمة مطلوبة.' });
@@ -360,8 +360,8 @@ app.post('/api/define-word', async (req, res) => {
 // 3. High-Quality Gemini TTS endpoint (Single speaker WAV)
 app.post('/api/tts', async (req, res) => {
   try {
-    const { text, voiceName = 'Kore' } = req.body;
-    const customKey = req.headers['x-gemini-api-key'] as string || undefined;
+    const { text, voiceName = 'Kore', customApiKey } = req.body;
+    const customKey = customApiKey || req.headers['x-gemini-api-key'] as string || undefined;
 
     if (!text || typeof text !== 'string') {
       return res.status(400).json({ error: 'النص المطلوب نطقه غير موجود.' });
