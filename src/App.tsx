@@ -133,7 +133,7 @@ function calculateCropArea(img: HTMLImageElement): { x: number; y: number; w: nu
 }
 
 // Client-side image compression with bulletproof fallback and screenshot black-bar cropping
-function compressImage(file: File, maxWidth = 1600, maxHeight = 1600, quality = 0.75): Promise<{ base64: string; type: string }> {
+function compressImage(file: File, maxWidth = 1400, maxHeight = 1400, quality = 0.75): Promise<{ base64: string; type: string }> {
   return new Promise((resolve) => {
     // Resilient fallback: read the file directly if image processing fails
     const fallbackDirectRead = () => {
@@ -184,6 +184,11 @@ function compressImage(file: File, maxWidth = 1600, maxHeight = 1600, quality = 
             fallbackDirectRead();
             return;
           }
+
+          // Important iOS Safari Fix: Fill background with solid white before drawing the image.
+          // Drawing transparent pixels and exporting as image/jpeg can result in a pitch-black image on mobile browsers!
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, width, height);
 
           // Draw only the cropped high-resolution document content
           ctx.drawImage(img, crop.x, crop.y, crop.w, crop.h, 0, 0, width, height);
