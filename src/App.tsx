@@ -34,8 +34,88 @@ interface SavedDocument {
 
 const STORAGE_KEY_DOCS = 'lingodoc_documents_library_v3';
 
-// Client-side image compression with bulletproof fallback to ensure uploads never fail
-function compressImage(file: File, maxWidth = 1600, maxHeight = 1600, quality = 0.85): Promise<{ base64: string; type: string }> {
+// Auto-crop solid black bars from mobile screenshots to maximize text legibility
+function calculateCropArea(img: HTMLImageElement): { x: number; y: number; w: number; h: number } {
+  const canvas = document.createElement('canvas');
+  // Use a fast, small canvas for pixel scanning
+  canvas.width = Math.min(img.width, 600);
+  canvas.height = Math.round((img.height * canvas.width) / img.width);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return { x: 0, y: 0, w: img.width, h: img.height };
+  
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  let imgData;
+  try {
+    imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  } catch (e) {
+    return { x: 0, y: 0, w: img.width, h: img.height };
+  }
+
+  const data = imgData.data;
+  const w = canvas.width;
+  const h = canvas.height;
+
+  let top = 0;
+  let bottom = h - 1;
+
+  // Threshold to consider a pixel "dark/black" (R,G,B < 40)
+  const isDark = (r: number, g: number, b: number) => r < 40 && g < 40 && b < 40;
+
+  // Find first non-black row from top
+  for (let y = 0; y < h; y++) {
+    let isRowDark = true;
+    for (let x = 0; x < w; x += Math.max(1, Math.floor(w / 15))) {
+      const idx = (y * w + x) * 4;
+      if (!isDark(data[idx], data[idx + 1], data[idx + 2])) {
+        isRowDark = false;
+        break;
+      }
+    }
+    if (!isRowDark) {
+      top = y;
+      break;
+    }
+  }
+
+  // Find last non-black row from bottom
+  for (let y = h - 1; y >= 0; y--) {
+    let isRowDark = true;
+    for (let x = 0; x < w; x += Math.max(1, Math.floor(w / 15))) {
+      const idx = (y * w + x) * 4;
+      if (!isDark(data[idx], data[idx + 1], data[idx + 2])) {
+        isRowDark = false;
+        break;
+      }
+    }
+    if (!isRowDark) {
+      bottom = y;
+      break;
+    }
+  }
+
+  const scaleY = img.height / h;
+  let originalTop = Math.floor(top * scaleY);
+  let originalBottom = Math.floor(bottom * scaleY);
+
+  // If black bars are not significant (less than 10% of height), don't crop
+  if (originalBottom <= originalTop || (originalBottom - originalTop) < img.height * 0.3) {
+    return { x: 0, y: 0, w: img.width, h: img.height };
+  }
+
+  // Add slight margin padding to avoid clipping top or bottom letters
+  originalTop = Math.max(0, originalTop - 15);
+  originalBottom = Math.min(img.height - 1, originalBottom + 15);
+
+  return {
+    x: 0,
+    y: originalTop,
+    w: img.width,
+    h: originalBottom - originalTop
+  };
+}
+
+// Client-side image compression with bulletproof fallback and screenshot black-bar cropping
+function compressImage(file: File, maxWidth = 1600, maxHeight = 1600, quality = 0.75): Promise<{ base64: string; type: string }> {
   return new Promise((resolve) => {
     // Resilient fallback: read the file directly if image processing fails
     const fallbackDirectRead = () => {
@@ -61,8 +141,9 @@ function compressImage(file: File, maxWidth = 1600, maxHeight = 1600, quality = 
       const img = new Image();
       img.onload = () => {
         try {
-          let width = img.width;
-          let height = img.height;
+          const crop = calculateCropArea(img);
+          let width = crop.w;
+          let height = crop.h;
 
           if (width > height) {
             if (width > maxWidth) {
@@ -86,7 +167,8 @@ function compressImage(file: File, maxWidth = 1600, maxHeight = 1600, quality = 
             return;
           }
 
-          ctx.drawImage(img, 0, 0, width, height);
+          // Draw only the cropped high-resolution document content
+          ctx.drawImage(img, crop.x, crop.y, crop.w, crop.h, 0, 0, width, height);
           
           const outputType = 'image/jpeg';
           const dataUrl = canvas.toDataURL(outputType, quality);
@@ -216,6 +298,12 @@ export default function App() {
         mimeType: type,
         titleHint: file.name,
       });
+
+      const totalSentencesFound = res.pages?.reduce((acc, p) => acc + (p.sentences?.length || 0), 0) || 0;
+      if (totalSentencesFound === 0) {
+        alert('لم يتمكن الذكاء الاصطناعي من قراءة نصوص إنجليزية في هذه الصورة. يرجى التأكد من أن صورة الكتاب واضحة ومضاءة جيداً ثم أعيدي التجربة.');
+        return;
+      }
 
       // Add as a new document to the library
       const newDoc: SavedDocument = {
@@ -695,8 +783,14 @@ export default function App() {
                 )}
 
                 {/* Sentences Sequence */}
-                <div className="space-y-6">
-                  {allSentences.map((sentence, idx) => {
+                {allSentences.length === 0 ? (
+                  <div className="p-8 text-center bg-amber-50/60 rounded-2xl border border-amber-200">
+                    <p className="text-sm font-bold text-amber-900 mb-1">لم يتم العثور على جمل إنجليزية في هذه الصفحة</p>
+                    <p className="text-xs text-amber-700">تأكدي من وضوح تصوير صفحة الكتاب وإضاءتها ثم أعيدي رفعها.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    {allSentences.map((sentence, idx) => {
                     const isPlaying = playingSentenceIndex === sentence.sentenceIndex;
                     const tokens = sentence.english.split(/(\s+|[.,!?;:"()]+)/);
 
@@ -779,7 +873,8 @@ export default function App() {
                       </div>
                     );
                   })}
-                </div>
+                  </div>
+                )}
               </>
             ) : (
               <div className="py-20 text-center text-slate-400">

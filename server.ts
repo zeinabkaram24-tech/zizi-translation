@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 
 dotenv.config();
 
@@ -19,7 +19,8 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Helper to get GoogleGenAI client
 function getGenAI(customKey?: string) {
-  const apiKey = customKey || process.env.GEMINI_API_KEY;
+  const cleanCustom = customKey ? customKey.trim() : '';
+  const apiKey = (cleanCustom.length > 15) ? cleanCustom : process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY_MISSING: يرجى إدخال مفتاح Gemini API الخاص بكِ في أيقونة الإعدادات ⚙️ بأعلى الشاشة لتفعيل الترجمة والتحليل.');
   }
@@ -57,7 +58,7 @@ async function generateWithRetry(params: {
   maxAttempts?: number;
   customKey?: string;
 }) {
-  const ai = getGenAI(params.customKey);
+  let ai = getGenAI(params.customKey);
   const models = [
     params.preferredModel || 'gemini-3.8-flash',
     'gemini-3.1-flash-lite',
@@ -67,16 +68,40 @@ async function generateWithRetry(params: {
 
   for (const model of models) {
     try {
+      const config = { ...params.config };
+      if (model.includes('3.8')) {
+        config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+      } else if (model.includes('3.1')) {
+        config.thinkingConfig = { thinkingLevel: ThinkingLevel.MINIMAL };
+      }
+
       const response = await ai.models.generateContent({
         model,
         contents: params.contents,
-        config: params.config,
+        config,
       });
       return response;
     } catch (err: any) {
       lastError = err;
       const status = err?.status || err?.code;
       console.warn(`Model ${model} failed (${status}):`, err?.message || err);
+
+      // If custom key failed due to auth/permission and system key is present, fallback immediately to system key
+      if (params.customKey && process.env.GEMINI_API_KEY && (err?.message?.includes('API_KEY') || err?.message?.includes('auth') || status === 400 || status === 403)) {
+        try {
+          console.warn('Custom key error encountered, trying system GEMINI_API_KEY fallback...');
+          const fallbackAi = getGenAI();
+          const fallbackResponse = await fallbackAi.models.generateContent({
+            model,
+            contents: params.contents,
+            config: params.config,
+          });
+          return fallbackResponse;
+        } catch (fbErr) {
+          console.warn('System key fallback also failed:', fbErr);
+        }
+      }
+
       // Wait 1200ms before attempting fallback model
       await new Promise((r) => setTimeout(r, 1200));
     }
@@ -95,34 +120,43 @@ app.post('/api/analyze-document', async (req, res) => {
       return res.status(400).json({ error: 'يرجى تقديم ملف أو نص للترجمة والتحليل.' });
     }
 
-    const systemInstruction = `أنت خبير لغوي ومعلم ومترجم محترف متخصص في تعليم اللغة الإنجليزية للمتحدثين بالعربية.
-مهمتك استخراج النص بدقة متناهية من المستند المرفق (سواء صورة ورقة، ماسح ضوئي، مستند PDF، أو نص مباشر)، وتقسيمه جملة بجملة (Sentence-by-Sentence).
+    const systemInstruction = `أنت خبير لغوي ومعلم ومترجم محترف متخصص في مساعدة طلاب اللغة الإنجليزية والمتحدثين بالعربية.
+مهمتك استخراج النص بدقة متناهية من المستند أو الصورة المرفقة (سواء صورة لصفحة كتاب، لقطة شاشة، ورقة عمل، مستند PDF، أو نص)، وتقسيمه جملة بجملة (Sentence-by-Sentence).
+تأكد من شمول وقراءة كل نص إنجليزي موجود في الصورة دون إغفال أي سطر أو عنوان.
 
-لكل جملة في المستند، يجب تقديم:
+لكل جملة أو عبارة:
 1. الجملة الإنجليزية الأصلية بدقة (english).
-2. الترجمة السياقية / المعنى المراد والمقصود (contextualTranslation): ترجمة عربية فصيحة، واضحة وسلسة تعبر عن المعنى الدقيق في السياق دون ركاكة.
+2. الترجمة السياقية / المعنى المراد والمقصود (contextualTranslation): ترجمة عربية فصيحة، واضحة وسلسة تعبر عن المعنى الدقيق في السياق.
 3. الترجمة الحرفية الهيكلية (literalTranslation): ترجمة كلمة بكلمة توضح التركيب الإنجليزي وكيف تم صياغة الجملة لتساعد المتعلم على فهم بنية القواعد.
-4. ملاحظة لغوية مبسطة (linguisticNote): شرح لمصطلح اصطلاحي (idiom)، حرف جر خاص، صيغة زمنية، أو تركيبة مهمة إن وجدت.
-5. المفردات البارزة (vocabulary): أهم الكلمات أو المصطلحات في الجملة مع معناها في السياق، ونوع الكلمة (اسم، فعل، صفة، إلخ) والنطق التقريبي باللغة العربية أو الصوتيات.
+4. ملاحظة لغوية مبسطة (linguisticNote): شرح لمصطلح، حرف جر، صيغة زمنية، أو تركيبة مهمة إن وجدت.
+5. المفردات البارزة (vocabulary): أهم الكلمات أو المصطلحات في الجملة مع معناها في السياق، ونوع الكلمة والنطق التقريبي باللغة العربية.
 
-قسّم النص بحسب الصفحات أو المقاطع المنطقية (pages). تأكد من شمول كامل النص الموجود في المستند دون تفويت أي فقرة أو عنوان.
-
-بالإضافة إلى ذلك، يجب عليك استخراج النص الإنجليزي الكامل للمستند كما ورد بالترتيب والتنسيق الأصلي تماماً (fullTextWithFormatting)، محتفظاً بالفقرات (Paragraphs)، وفواصل الأسطر الجديدة (Line breaks)، والتعداد النقطي إن وجد، لكي يتمكن الطالب من قراءته كنص متكامل بنفس الشكل والتنسيق الأصلي للورقة التي رفعها.`;
+قسّم النص بحسب الصفحات (pages)، واستخرج النص الإنجليزي الكامل للمستند كما ورد بالترتيب والتنسيق الأصلي تماماً (fullTextWithFormatting).`;
 
     const contents: any[] = [];
 
-    let promptText = `قم بتحليل هذا المستند وتقسيمه جملة بجملة واستخراج الترجمة السياقية والحرفية والمفردات بالتفصيل.`;
+    let promptText = `اقرأ بدقة عالية واستخرج كل النصوص والجمل الإنجليزية الظاهرة في هذه الصورة أو الصفحة (حتى لو كانت صورة مصورة بكاميرا هاتف أو مائلة أو بها ظلال).
+قسّم النص المستخرج إلى جمل واضحة ومرتبة، واستخرج الترجمة السياقية والحرفية والمفردات بالتفصيل الكامل.`;
     if (titleHint) {
       promptText += ` عنوان المستند المحتمل: ${titleHint}.`;
     }
 
-    if (fileData && mimeType) {
+    if (fileData) {
+      let cleanData = fileData;
+      if (typeof cleanData === 'string' && cleanData.includes(',')) {
+        cleanData = cleanData.split(',')[1];
+      }
+
+      let cleanType = mimeType || 'image/jpeg';
+      if (cleanType === 'image/jpg') cleanType = 'image/jpeg';
+
       contents.push({
+        role: 'user',
         parts: [
           {
             inlineData: {
-              data: fileData,
-              mimeType: mimeType,
+              data: cleanData,
+              mimeType: cleanType,
             },
           },
           {
@@ -132,6 +166,7 @@ app.post('/api/analyze-document', async (req, res) => {
       });
     } else {
       contents.push({
+        role: 'user',
         parts: [
           {
             text: `${promptText}\n\nالنص المراد تحليله وترجمته:\n${text}`,
